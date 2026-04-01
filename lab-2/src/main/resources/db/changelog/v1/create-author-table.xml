@@ -18,10 +18,17 @@
             </column>
         </createTable>
 
+
+        <!-- Использую <sql>, так как это единственный способ добавить CHECK constraint в данной версии,
+        иначе всё ломается... -->
         <sql>
             ALTER TABLE author ADD CONSTRAINT check_birth_year
                 CHECK (birth_year BETWEEN 1800 AND 2010);
         </sql>
+
+        <rollback>
+            ALTER TABLE author DROP CONSTRAINT IF EXISTS check_birth_year;
+        </rollback>
     </changeSet>
 
 </databaseChangeLog>

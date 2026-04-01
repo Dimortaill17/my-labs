@@ -8,7 +8,7 @@ import org.slf4j.LoggerFactory;
 import java.sql.Connection;
 import java.sql.SQLException;
 
-public class DatabaseConfig {
+public class DatabaseConfig implements AutoCloseable {
     private static final Logger log = LoggerFactory.getLogger(DatabaseConfig.class);
 
     private final HikariDataSource dataSource;
@@ -31,34 +31,28 @@ public class DatabaseConfig {
             log.warn("DB_PASSWORD не задан, используем значение по умолчанию");
         }
 
-        try {
-            Class.forName("org.postgresql.Driver");
-            log.info("PostgreSQL JDBC Driver зарегистрирован");
+        log.info("PostgreSQL JDBC Driver будет загружен автоматически через SPI");
 
-            HikariConfig config = new HikariConfig();
-            config.setJdbcUrl(jdbcUrl);
-            config.setUsername(username);
-            config.setPassword(password);
+        HikariConfig config = new HikariConfig();
+        config.setJdbcUrl(jdbcUrl);
+        config.setUsername(username);
+        config.setPassword(password);
 
-            config.setMaximumPoolSize(10);
-            config.setMinimumIdle(5);
-            config.setIdleTimeout(300000);
-            config.setConnectionTimeout(30000);
-            config.setMaxLifetime(1800000);
+        config.setMaximumPoolSize(10);
+        config.setMinimumIdle(5);
+        config.setIdleTimeout(300000);
+        config.setConnectionTimeout(30000);
+        config.setMaxLifetime(1800000);
 
-            dataSource = new HikariDataSource(config);
-            log.info("HikariCP connection pool инициализирован");
-
-        } catch (ClassNotFoundException e) {
-            log.error("PostgreSQL JDBC Driver не найден", e);
-            throw new RuntimeException("Driver not found", e);
-        }
+        this.dataSource = new HikariDataSource(config);
+        log.info("HikariCP connection pool инициализирован");
     }
 
     public Connection getConnection() throws SQLException {
         return dataSource.getConnection();
     }
 
+    @Override
     public void close() {
         if (dataSource != null && !dataSource.isClosed()) {
             dataSource.close();
