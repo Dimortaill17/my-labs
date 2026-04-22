@@ -3,9 +3,12 @@ package com.kruchkova.labs;
 import com.kruchkova.labs.config.DatabaseConfig;
 import com.kruchkova.labs.entity.AuthorEntity;
 import com.kruchkova.labs.exception.RepositoryException;
+import com.kruchkova.labs.exception.ServiceException;
 import com.kruchkova.labs.migration.DatabaseMigrator;
 import com.kruchkova.labs.repository.AuthorRepository;
 import com.kruchkova.labs.repository.impl.AuthorRepositoryJdbi;
+import com.kruchkova.labs.service.AuthorService;
+import com.kruchkova.labs.service.impl.AuthorServiceImpl;
 import com.kruchkova.labs.util.DatabaseInitializer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,13 +24,19 @@ public class Main {
 
         try (DatabaseConfig databaseConfig = new DatabaseConfig()) {
 
+            // Запуск миграций Liquibase
             DatabaseMigrator migrator = new DatabaseMigrator(databaseConfig);
             DatabaseInitializer initializer = new DatabaseInitializer(migrator);
             initializer.createTableIfNotExists();
 
+            // Создание репозитория
             AuthorRepository repo = new AuthorRepositoryJdbi(databaseConfig);
 
-            demonstrateRepository(repo);
+            //Создание сервиса и внедрение в него репозитория
+            AuthorService service = new AuthorServiceImpl(repo);
+
+            // Запускаем демонстрацию, передавая теперь сервис вместо репозитория
+            demonstrateService(service);
 
         } catch (RepositoryException e) {
             log.error("Ошибка репозитория: {}", e.getMessage());
@@ -35,6 +44,10 @@ public class Main {
                 log.error("Причина: {}", e.getCause().getMessage());
             }
             throw e;
+        } catch (ServiceException e) {
+            // Обработка бизнес-ошибок от сервиса
+            log.error("Ошибка сервиса: {}", e.getMessage());
+            System.out.println("Бизнес-ошибка: " + e.getMessage());
         } catch (Exception e) {
             log.error("Неожиданная ошибка", e);
             throw new RuntimeException(e);
@@ -43,60 +56,98 @@ public class Main {
         log.info("Приложение завершено");
     }
 
-    private static void demonstrateRepository(AuthorRepository repo) {
+    private static void demonstrateService(AuthorService service) {
         log.info("=== Демонстрация CRUD операций ===\n");
 
+        int id;
+        int id2;
+        int id3;
+
         // 1. CREATE
-        // Автор 1
         log.info("1. CREATE: Создание автора");
-        AuthorEntity author = new AuthorEntity("Лев Николаевич Толстой", 1828);
-        int id = repo.save(author);
-        log.info("   Создан: {} (id={})\n", author.getName(), id);
+        try {
+            // Используем метод save(name, birthYear) из сервиса
+            id = service.save("Лев Николаевич Толстой", 1828);
+            log.info("   Создан: Лев Николаевич Толстой (id={})\n", id);
 
-        // Автор 2
-        AuthorEntity author2 = new AuthorEntity("Федор Михайлович Достоевский", 1821);
-        int id2 = repo.save(author2);
-        log.info("   Создан: {} (id={})\n", author2.getName(), id2);
+            id2 = service.save("Федор Михайлович Достоевский", 1821);
+            log.info("   Создан: Федор Михайлович Достоевский (id={})\n", id2);
 
-        // Автор 3
-        AuthorEntity author3 = new AuthorEntity("Антон Павлович Чехов", 1860);
-        int id3 = repo.save(author3);
-        log.info("   Создан: {} (id={})\n", author3.getName(), id3);
+            id3 = service.save("Антон Павлович Чехов", 1860);
+            log.info("   Создан: Антон Павлович Чехов (id={})\n", id3);
+        } catch (ServiceException e) {
+            log.warn("Не удалось создать авторов: {}", e.getMessage());
+            return;
+        }
 
         // 2. READ by ID
         log.info("2. READ: Поиск по ID");
-        Optional<AuthorEntity> foundOpt = repo.findById(id);
-        log.info("   Найден по id={}: {}\n", id, foundOpt.orElse(null));
+        try {
+            AuthorEntity found = service.findById(id);
+            log.info("   Найден по id={}: {}\n", id, found);
+        } catch (ServiceException e) {
+            log.info("   Найден по id={}: null (не найден)\n", id);
+        }
 
-        // 3. READ by Field
+
+        // 3. READ by Field (по имени)
         log.info("3. READ: Поиск по имени");
-        AuthorEntity foundByName = repo.findByField("Лев Николаевич Толстой");
-        log.info("   Найден по имени: {}\n", foundByName != null ? foundByName : "null");
+        try {
+            AuthorEntity foundByName = service.findByName("Лев Николаевич Толстой");
+            log.info("   Найден по имени: {}\n", foundByName);
+        } catch (ServiceException e) {
+            log.info("   Найден по имени: null (не найден)\n");
+        }
 
         // 4. READ ALL
         log.info("4. READ ALL: Все авторы");
-        List<AuthorEntity> all = repo.findAll();
+        List<AuthorEntity> all = service.findAll();
         log.info("   Всего авторов: {}", all.size());
         all.forEach(a -> log.info("   - {}", a));
         log.info("");
 
         // 5. UPDATE
         log.info("5. UPDATE: Обновление");
-        author.setBirthYear(1800);
-        boolean updated = repo.update(author);
-        log.info("   Обновление: {}", updated);
-        boolean secondUpdate = repo.update(author);
-        log.info("   Идемпотентность (повтор): {}\n", secondUpdate);
+        try {
+            // Создаем объект для обновления, т.к. сервис требует полный объект
+            // Берем текущего автора, меняем год и обновляем
+            AuthorEntity authorToUpdate = new AuthorEntity(id, "Лев Николаевич Толстой", 1800);
+
+            boolean updated = updateAuthorSafely(service, authorToUpdate);
+            log.info("   Обновление: {}", updated);
+
+            // Повторное обновление теми же данными
+            boolean secondUpdate = updateAuthorSafely(service, authorToUpdate);
+            log.info("   Идемпотентность (повтор): {}\n", secondUpdate);
+        } catch (ServiceException e) {
+            log.error("   Ошибка при обновлении: {}", e.getMessage());
+        }
 
         // 6. DELETE
         log.info("6. DELETE: Удаление");
-        repo.deleteById(id);
+        service.deleteById(id);
         log.info("   Удалён автор с id={}", id);
-        repo.deleteById(id);  // идемпотентность
-        log.info("   Идемпотентность (повтор): выполнено без ошибки\n");
+
+        // Проверка идемпотентности: повторное удаление не должно вызывать ошибку
+        try {
+            service.deleteById(id);
+            log.info("   Идемпотентность (повтор): выполнено без ошибки\n");
+        } catch (ServiceException e) {
+            log.info("   Идемпотентность (повтор): ошибка\n");
+        }
 
         // 7. ФИНАЛЬНОЕ СОСТОЯНИЕ
         log.info("7. ФИНАЛЬНОЕ СОСТОЯНИЕ");
-        log.info("   Осталось авторов: {}", repo.findAll().size());
+        log.info("   Осталось авторов: {}", service.findAll().size());
+    }
+
+    // Возвращает true, если обновление успешно, иначе false
+    private static boolean updateAuthorSafely(AuthorService service, AuthorEntity author) {
+        try {
+            service.update(author);
+            return true;
+        } catch (ServiceException e) {
+            return false;
+        }
     }
 }
